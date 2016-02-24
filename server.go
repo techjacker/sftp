@@ -226,6 +226,8 @@ func (svr *Server) decodePacket(pktType fxp, pktBytes []byte) (serverRespondable
 		pkt = &sshFxpReadlinkPacket{}
 	case ssh_FXP_SYMLINK:
 		pkt = &sshFxpSymlinkPacket{}
+	case ssh_FXP_EXTENDED:
+		pkt = &sshFxpExtendedPacket{}
 	default:
 		return nil, fmt.Errorf("unhandled packet type: %s", pktType)
 	}
@@ -597,6 +599,12 @@ func (p sshFxpFsetstatPacket) respond(svr *Server) error {
 	}
 
 	return svr.sendPacket(statusFromError(p.ID, err))
+}
+
+func (p sshFxpExtendedPacket) readonly() bool { return p.SpecificPacket.readonly() }
+
+func (p sshFxpExtendedPacket) respond(svr *Server) error {
+	return p.SpecificPacket.respond(svr)
 }
 
 // translateErrno translates a syscall error number to a SFTP error code.

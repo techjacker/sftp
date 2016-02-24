@@ -18,6 +18,29 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+type clientState int
+
+const (
+	stateClosed clientState = iota
+	stateRecvFinished
+	stateRunning
+)
+
+var (
+	errClientClosed       = errors.New("client has closed")
+	errClientRecvFinished = errors.New("client recv finished")
+)
+
+func (cs clientState) usageError() error {
+	if cs == stateClosed {
+		return errClientClosed
+	}
+	if cs == stateRecvFinished {
+		return errClientRecvFinished
+	}
+	return nil
+}
+
 // MaxPacket sets the maximum size of the payload.
 func MaxPacket(size int) func(*Client) error {
 	return func(c *Client) error {
@@ -61,6 +84,7 @@ func NewClientPipe(rd io.Reader, wr io.WriteCloser, opts ...func(*Client) error)
 		maxPacket:  1 << 15,
 		inflight:   make(map[uint32]chan<- result),
 		recvClosed: make(chan struct{}),
+		state:      stateRunning,
 	}
 	if err := sftp.applyOptions(opts...); err != nil {
 		wr.Close()
@@ -93,12 +117,14 @@ type Client struct {
 	mu         sync.Mutex               // ensures only on request is in flight to the server at once
 	inflight   map[uint32]chan<- result // outstanding requests
 	recvClosed chan struct{}            // remote end has closed the connection
+	state      clientState
 }
 
 // Close closes the SFTP session.
 func (c *Client) Close() error {
 	err := c.w.Close()
 	<-c.recvClosed
+	c.state = stateClosed
 	return err
 }
 
@@ -140,8 +166,10 @@ func (c *Client) recvVersion() error {
 }
 
 // broadcastErr sends an error to all goroutines waiting for a response.
+// also puts client into 'stateRecvFinished'
 func (c *Client) broadcastErr(err error) {
 	c.mu.Lock()
+	c.state = stateRecvFinished
 	listeners := make([]chan<- result, 0, len(c.inflight))
 	for _, ch := range c.inflight {
 		listeners = append(listeners, ch)
@@ -666,12 +694,16 @@ func (c *Client) sendRequest(p idmarshaler) (byte, []byte, error) {
 
 func (c *Client) dispatchRequest(ch chan<- result, p idmarshaler) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != stateRunning {
+		ch <- result{err: c.state.usageError()}
+		return
+	}
 	c.inflight[p.id()] = ch
 	if err := sendPacket(c.w, p); err != nil {
 		delete(c.inflight, p.id())
 		ch <- result{err: err}
 	}
-	c.mu.Unlock()
 }
 
 // Mkdir creates the specified directory. An error will be returned if a file or
