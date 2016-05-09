@@ -109,6 +109,11 @@ func (c *Client) Create(path string) (*File, error) {
 	return c.open(path, flags(os.O_RDWR|os.O_CREATE|os.O_TRUNC))
 }
 
+// CreateWithMode creates the named file with the specified file mode
+func (c *Client) CreateWithMode(path string, mode int) (*File, error) {
+	return c.open(path, flags(mode))
+}
+
 const sftpProtocolVersion = 3 // http://tools.ietf.org/html/draft-ietf-secsh-filexfer-02
 
 func (c *Client) sendInit() error {
